@@ -1,0 +1,12 @@
+version: '3.8'
+
+services:
+  node-monitor:
+    build: .
+    container_name: node-monitor
+    env_file:
+      - .env
+    volumes:
+      - ./data/servers.db:/app/servers.db
+      - ./logs/bot.log:/app/bot.log
+    restart: unless-stopped
