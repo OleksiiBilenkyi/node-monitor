@@ -5,16 +5,19 @@ import paramiko
 import aiosqlite
 from data_base import get_server_info, get_ignored_containers
 import logging
+import os
 
 def setup_commands(bot):
     bot.monitor_state = {"messages": {}, "servers": [], "container_cache": {}}
 
     # Налаштування логування
+    log_dir = "logs"
+    os.makedirs(log_dir, exist_ok=True) 
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s [%(levelname)s] %(message)s",
         handlers=[
-            logging.FileHandler("bot.log", encoding="utf-8"),
+            logging.FileHandler(os.path.join(log_dir, "bot.log"), encoding="utf-8"),
             logging.StreamHandler()  # Логи в stdout для Docker
         ]
     )
@@ -32,10 +35,10 @@ def setup_commands(bot):
             "**Допомога**\n"
             "```css\n"
             "!add_server <ip> <username> <password> [name] [port] - Додає сервер до моніторингу (порт за замовчуванням 22).\n"
-            "!ignore_container <name> - Додає контейнер до списку ігнорованих.\n"
-            "!unignore_container <name> - Видаляє контейнер зі списку ігнорованих.\n"
+            "!ignore_container <name> - Ігнорує контейнер у моніторингу.\n"
+            "!unignore_container <name> - Прибирає контейнер зі списку ігнорованих.\n"
             "!start_monitor - Запускає моніторинг серверів.\n"
-            "!force_update - Примусово оновлює дані моніторингу.\n"
+            "!force_update - Примусово оновлює дані.\n"
             "!help - Показує цей список команд.\n"
             "```"
         )
@@ -117,7 +120,6 @@ def setup_commands(bot):
 
     @tasks.loop()
     async def update_status(channel, servers):
-        # Перевіряємо базу на нові сервери
         async with aiosqlite.connect("servers.db") as db:
             async with db.execute("SELECT * FROM servers") as cursor:
                 current_servers = await cursor.fetchall()
@@ -125,7 +127,6 @@ def setup_commands(bot):
         current_server_ips = {server[1] for server in current_servers}
         monitored_ips = {server[1] for server in bot.monitor_state["servers"]}
         
-        # Додаємо нові сервери
         for server in current_servers:
             server_id, ip, port, username, password, name = server
             if ip not in monitored_ips:
@@ -135,7 +136,6 @@ def setup_commands(bot):
                 bot.monitor_state["messages"][ip] = message
                 bot.monitor_state["container_cache"][ip] = []
 
-        # Оновлюємо дані для всіх серверів
         for server in bot.monitor_state["servers"]:
             server_id, ip, port, username, password, name = server
             server_info = await get_server_info({"ip": ip, "port": port, "username": username, "password": password})
@@ -151,14 +151,13 @@ def setup_commands(bot):
                 text += "----------------------------------------\n"
                 
                 if server_info['containers']:
-                    # Порівнюємо з кешем для виявлення нових контейнерів
                     cached_names = {c['name'] for c in bot.monitor_state["container_cache"][ip]}
                     current_names = {c['name'] for c in server_info['containers']}
                     new_containers = current_names - cached_names
                     if new_containers:
                         logging.info(f"Нові контейнери на {ip}: {new_containers}")
                     
-                    bot.monitor_state["container_cache"][ip] = server_info['containers']  # Оновлюємо кеш
+                    bot.monitor_state["container_cache"][ip] = server_info['containers']
                     
                     text += "```css\nСтатус Ім’я            Час роботи           CPU      RAM\n" + "-" * 50 + "\n"
                     for c in server_info['containers']:
