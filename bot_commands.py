@@ -12,13 +12,13 @@ def setup_commands(bot):
 
     # Налаштування логування
     log_dir = "logs"
-    os.makedirs(log_dir, exist_ok=True) 
+    os.makedirs(log_dir, exist_ok=True)
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s [%(levelname)s] %(message)s",
         handlers=[
             logging.FileHandler(os.path.join(log_dir, "bot.log"), encoding="utf-8"),
-            logging.StreamHandler()  # Логи в stdout для Docker
+            logging.StreamHandler()
         ]
     )
 
@@ -48,7 +48,7 @@ def setup_commands(bot):
     async def add_server(ctx, ip, username, password, name=None, port: int = 22):
         if not await check_permissions(ctx):
             return
-        async with aiosqlite.connect("servers.db") as db:
+        async with aiosqlite.connect("/app/data/servers.db") as db:
             await db.execute("INSERT INTO servers (ip, port, username, password, name) VALUES (?, ?, ?, ?, ?)",
                              (ip, port, username, password, name))
             await db.commit()
@@ -60,7 +60,7 @@ def setup_commands(bot):
         if not await check_permissions(ctx):
             return
         try:
-            async with aiosqlite.connect("servers.db") as db:
+            async with aiosqlite.connect("/app/data/servers.db") as db:
                 await db.execute("INSERT INTO ignored_containers (name) VALUES (?)", (container_name,))
                 await db.commit()
             await ctx.reply(f"Контейнер `{container_name}` додано до списку ігнорованих.", delete_after=5)
@@ -72,7 +72,7 @@ def setup_commands(bot):
     async def unignore_container(ctx, container_name):
         if not await check_permissions(ctx):
             return
-        async with aiosqlite.connect("servers.db") as db:
+        async with aiosqlite.connect("/app/data/servers.db") as db:
             await db.execute("DELETE FROM ignored_containers WHERE name = ?", (container_name,))
             await db.commit()
         await ctx.reply(f"Контейнер `{container_name}` видалено зі списку ігнорованих.", delete_after=5)
@@ -82,7 +82,7 @@ def setup_commands(bot):
     async def start_monitor(ctx):
         if not await check_permissions(ctx):
             return
-        async with aiosqlite.connect("servers.db") as db:
+        async with aiosqlite.connect("/app/data/servers.db") as db:
             async with db.execute("SELECT * FROM servers") as cursor:
                 servers = await cursor.fetchall()
         
@@ -100,7 +100,7 @@ def setup_commands(bot):
             bot.monitor_state["messages"][ip] = message
             bot.monitor_state["container_cache"][ip] = []
 
-        update_status.change_interval(seconds=1800)  # Оновлення кожні 30 хвилин
+        update_status.change_interval(seconds=1800)
         update_status.start(ctx.channel, servers)
         await ctx.message.delete()
 
@@ -120,7 +120,7 @@ def setup_commands(bot):
 
     @tasks.loop()
     async def update_status(channel, servers):
-        async with aiosqlite.connect("servers.db") as db:
+        async with aiosqlite.connect("/app/data/servers.db") as db:
             async with db.execute("SELECT * FROM servers") as cursor:
                 current_servers = await cursor.fetchall()
         

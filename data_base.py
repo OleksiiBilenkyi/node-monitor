@@ -1,10 +1,9 @@
 import aiosqlite
 import paramiko
 import asyncio
-import logging
 
 async def init_db():
-    async with aiosqlite.connect("servers.db") as db:
+    async with aiosqlite.connect("/app/data/servers.db") as db:  # Змінено шлях
         await db.execute(
             """CREATE TABLE IF NOT EXISTS servers (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -25,6 +24,7 @@ async def init_db():
                 cpu_load TEXT,
                 mem_load TEXT,
                 created TEXT,
+                disk_usage TEXT,
                 FOREIGN KEY (server_id) REFERENCES servers(id)
             )"""
         )
@@ -50,7 +50,6 @@ async def get_server_info(server):
     ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
     try:
         port = server.get("port", 22)
-        logging.debug(f"Connecting to {server['ip']}:{port} with username {server['username']}")
         await asyncio.to_thread(ssh.connect, server["ip"], port=port, username=server["username"], password=server["password"])
 
         commands = {
@@ -64,9 +63,7 @@ async def get_server_info(server):
         results = {}
         for key, cmd in commands.items():
             output, error = await asyncio.to_thread(ssh_exec, ssh, cmd)
-            logging.debug(f"Command '{cmd}' output: {output}")
             if error:
-                logging.error(f"Error executing {cmd}: {error}")
                 return f"Error executing {cmd}: {error}"
             results[key] = output
 
@@ -74,28 +71,12 @@ async def get_server_info(server):
         mem = results["mem"].split()
         mem_usage = f"{mem[2]}/{mem[1]} MB"
         disk = results["disk"].split()[2:4]
-        uptime_raw = results["uptime"]
-        # Скорочуємо час роботи
-        uptime_parts = uptime_raw.replace("up ", "").split(", ")
-        uptime = ""
-        for part in uptime_parts:
-            if "week" in part:
-                weeks = part.split()[0]
-                uptime += f"{weeks} тиж{'нів' if int(weeks) > 1 else 'ень'}, "
-            elif "hour" in part:
-                hours = part.split()[0]
-                uptime += f"{hours} год"
-            elif "minute" in part:
-                minutes = part.split()[0]
-                uptime += f"{minutes} хв"
-        uptime = uptime.strip(", ")
+        uptime = results["uptime"]
 
         containers_raw = results["containers"].splitlines()
-        logging.debug(f"Raw containers data: {containers_raw}")
         
-        async with aiosqlite.connect("servers.db") as db:
+        async with aiosqlite.connect("/app/data/servers.db") as db:  # Змінено шлях
             ignored_containers = await get_ignored_containers(db)
-            logging.debug(f"Ignored containers: {ignored_containers}")
         
         containers = []
         for container in containers_raw:
@@ -104,12 +85,10 @@ async def get_server_info(server):
             try:
                 c_id, c_name, c_state, c_created, c_status = container.split("|", 4)
                 if c_name in ignored_containers:
-                    logging.debug(f"Skipping ignored container: {c_name}")
                     continue
 
                 stats_output, stats_error = await asyncio.to_thread(ssh_exec, ssh, f"docker stats --no-stream {c_id}")
                 if stats_error:
-                    logging.error(f"Stats error for {c_id}: {stats_error}")
                     stats_cpu, stats_mem = "N/A", "N/A"
                 else:
                     stats = stats_output.splitlines()[1].split()
@@ -123,12 +102,9 @@ async def get_server_info(server):
                     "created": c_created,
                     "uptime": c_status
                 })
-                logging.debug(f"Added container: {c_name}")
             except ValueError as e:
-                logging.error(f"Failed to parse container data: {container}, error: {e}")
                 continue
         
-        logging.debug(f"Processed containers: {containers}")
         return {
             "cpu": cpu,
             "mem": mem_usage,
@@ -137,7 +113,6 @@ async def get_server_info(server):
             "containers": containers
         }
     except Exception as e:
-        logging.error(f"General error in get_server_info: {str(e)}")
         return f"Error: {str(e)}"
     finally:
         ssh.close()
