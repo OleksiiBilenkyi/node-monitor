@@ -3,7 +3,7 @@ import paramiko
 import asyncio
 
 async def init_db():
-    async with aiosqlite.connect("/app/data/servers.db") as db:  # Змінено шлях
+    async with aiosqlite.connect("/servers.db") as db:  # Змінено шлях
         await db.execute(
             """CREATE TABLE IF NOT EXISTS servers (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -75,7 +75,7 @@ async def get_server_info(server):
 
         containers_raw = results["containers"].splitlines()
         
-        async with aiosqlite.connect("/app/data/servers.db") as db:  # Змінено шлях
+        async with aiosqlite.connect("/servers.db") as db:  # Змінено шлях
             ignored_containers = await get_ignored_containers(db)
         
         containers = []
