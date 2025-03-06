@@ -17,24 +17,25 @@ class PaginationView(discord.ui.View):
         self.page = page
         self.per_page = 20
         self.total_pages = (len(containers) + self.per_page - 1) // self.per_page
+        # Ініціалізуємо стан кнопок
+        self.previous.disabled = self.page == 0
+        self.next.disabled = self.page == self.total_pages - 1
 
-    @discord.ui.button(label="Попередня", style=discord.ButtonStyle.grey, disabled=True)
+    @discord.ui.button(label="Попередня", style=discord.ButtonStyle.grey)
     async def previous(self, interaction: discord.Interaction, button: discord.ui.Button):
         if self.page > 0:
             self.page -= 1
+            self.previous.disabled = self.page == 0
+            self.next.disabled = self.page == self.total_pages - 1
             await self.update_message(interaction)
-        button.disabled = self.page == 0
-        self.next.disabled = self.page == self.total_pages - 1
-        await interaction.response.edit_message(content=self.get_message_text(), view=self)
 
     @discord.ui.button(label="Наступна", style=discord.ButtonStyle.grey)
     async def next(self, interaction: discord.Interaction, button: discord.ui.Button):
         if self.page < self.total_pages - 1:
             self.page += 1
+            self.previous.disabled = self.page == 0
+            self.next.disabled = self.page == self.total_pages - 1
             await self.update_message(interaction)
-        button.disabled = self.page == self.total_pages - 1
-        self.previous.disabled = self.page == 0
-        await interaction.response.edit_message(content=self.get_message_text(), view=self)
 
     async def update_message(self, interaction: discord.Interaction):
         await interaction.response.edit_message(content=self.get_message_text(), view=self)
@@ -99,7 +100,7 @@ def setup_commands(bot):
     async def add_server(ctx, ip, username, password, name=None, port: int = 22):
         if not await check_permissions(ctx):
             return
-        async with aiosqlite.connect("servers.db") as db:  # Змінено шлях
+        async with aiosqlite.connect("servers.db") as db:
             await db.execute("INSERT INTO servers (ip, port, username, password, name) VALUES (?, ?, ?, ?, ?)",
                              (ip, port, username, password, name))
             await db.commit()
@@ -111,7 +112,7 @@ def setup_commands(bot):
         if not await check_permissions(ctx):
             return
         try:
-            async with aiosqlite.connect("servers.db") as db:  # Змінено шлях
+            async with aiosqlite.connect("servers.db") as db:
                 await db.execute("INSERT INTO ignored_containers (name) VALUES (?)", (container_name,))
                 await db.commit()
             await ctx.reply(f"Контейнер `{container_name}` додано до списку ігнорованих.", delete_after=5)
@@ -123,7 +124,7 @@ def setup_commands(bot):
     async def unignore_container(ctx, container_name):
         if not await check_permissions(ctx):
             return
-        async with aiosqlite.connect("servers.db") as db:  # Змінено шлях
+        async with aiosqlite.connect("servers.db") as db:
             await db.execute("DELETE FROM ignored_containers WHERE name = ?", (container_name,))
             await db.commit()
         await ctx.reply(f"Контейнер `{container_name}` видалено зі списку ігнорованих.", delete_after=5)
@@ -133,7 +134,7 @@ def setup_commands(bot):
     async def start_monitor(ctx):
         if not await check_permissions(ctx):
             return
-        async with aiosqlite.connect("servers.db") as db:  # Змінено шлях
+        async with aiosqlite.connect("servers.db") as db:
             async with db.execute("SELECT * FROM servers") as cursor:
                 servers = await cursor.fetchall()
         
@@ -154,7 +155,6 @@ def setup_commands(bot):
 
         update_status.change_interval(seconds=1800)
         update_status.start(ctx.channel, servers)
-        # await ctx.message.delete()  # Залишаємо команду в чаті
 
     @bot.command()
     async def force_update(ctx):
@@ -168,7 +168,6 @@ def setup_commands(bot):
                 await ctx.reply("Помилка: стан моніторингу не знайдено!", delete_after=5)
         else:
             await ctx.reply("Моніторинг не запущено! Спочатку виконай !start_monitor.", delete_after=5)
-        # await ctx.message.delete()  # Залишаємо команду в чаті
 
     @bot.command()
     async def sh(ctx, ip: str, *, command: str):
@@ -177,7 +176,7 @@ def setup_commands(bot):
             await ctx.message.delete()
             return
 
-        async with aiosqlite.connect("servers.db") as db:  # Змінено шлях
+        async with aiosqlite.connect("servers.db") as db:
             async with db.execute("SELECT * FROM servers WHERE ip = ?", (ip,)) as cursor:
                 server = await cursor.fetchone()
         
@@ -210,7 +209,7 @@ def setup_commands(bot):
 
     @tasks.loop()
     async def update_status(channel, servers):
-        async with aiosqlite.connect("servers.db") as db:  # Змінено шлях
+        async with aiosqlite.connect("servers.db") as db:
             async with db.execute("SELECT * FROM servers") as cursor:
                 current_servers = await cursor.fetchall()
         
