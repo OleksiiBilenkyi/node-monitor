@@ -1,87 +1,118 @@
 import aiosqlite
 import paramiko
-import logging
 import asyncio
 
 async def init_db():
     async with aiosqlite.connect("servers.db") as db:  # Змінено шлях на корінь проекту
-        await db.execute("""
-            CREATE TABLE IF NOT EXISTS servers (
+        await db.execute(
+            """CREATE TABLE IF NOT EXISTS servers (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 ip TEXT NOT NULL,
                 port INTEGER,
-                username TEXT NOT NULL,
-                password TEXT NOT NULL,
+                username TEXT,
+                password TEXT,
                 name TEXT
-            )
-        """)
-        await db.execute("""
-            CREATE TABLE IF NOT EXISTS ignored_containers (
+            )"""
+        )
+        await db.execute(
+            """CREATE TABLE IF NOT EXISTS containers (
+                server_id INTEGER,
+                container_id TEXT,
+                name TEXT,
+                status TEXT,
+                uptime TEXT,
+                cpu_load TEXT,
+                mem_load TEXT,
+                created TEXT,
+                disk_usage TEXT,
+                FOREIGN KEY (server_id) REFERENCES servers(id)
+            )"""
+        )
+        await db.execute(
+            """CREATE TABLE IF NOT EXISTS ignored_containers (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 name TEXT NOT NULL UNIQUE
-            )
-        """)
+            )"""
+        )
         await db.commit()
 
+async def get_ignored_containers(db):
+    async with db.execute("SELECT name FROM ignored_containers") as cursor:
+        rows = await cursor.fetchall()
+        return [row[0] for row in rows]
+
 async def get_server_info(server):
+    def ssh_exec(ssh_client, command):
+        stdin, stdout, stderr = ssh_client.exec_command(command)
+        return stdout.read().decode().strip(), stderr.read().decode().strip()
+
     ssh = paramiko.SSHClient()
     ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
     try:
-        await asyncio.to_thread(ssh.connect, server["ip"], port=server.get("port", 22), 
-                                username=server["username"], password=server["password"])
-        stdin, stdout, stderr = await asyncio.to_thread(ssh.exec_command, 
-            "uptime -p && free -m | grep Mem: && df -h / | tail -n 1 && docker ps -a --format '{{.Names}} {{.Status}} {{.CreatedAt}} {{.ID}}'")
+        port = server.get("port", 22)
+        await asyncio.to_thread(ssh.connect, server["ip"], port=port, username=server["username"], password=server["password"])
+
+        commands = {
+            "cpu": "top -bn1 | grep 'Cpu(s)'",
+            "mem": "free -m | grep 'Mem:'",
+            "disk": "df -h / | tail -n1",
+            "uptime": "uptime -p",
+            "containers": "docker ps -a --format '{{.ID}}|{{.Names}}|{{.State}}|{{.CreatedAt}}|{{.Status}}'"
+        }
         
-        uptime = stdout.readline().strip().replace("up ", "")
-        mem = stdout.readline().strip().split()
-        disk = stdout.readline().strip().split()
-        containers_raw = stdout.read().decode().strip().splitlines()
+        results = {}
+        for key, cmd in commands.items():
+            output, error = await asyncio.to_thread(ssh_exec, ssh, cmd)
+            if error:
+                return f"Error executing {cmd}: {error}"
+            results[key] = output
+
+        cpu = results["cpu"].split()[1]
+        mem = results["mem"].split()
+        mem_usage = f"{mem[2]}/{mem[1]} MB"
+        disk = results["disk"].split()[2:4]
+        uptime = results["uptime"]
+
+        containers_raw = results["containers"].splitlines()
         
-        mem_total = int(mem[1])
-        mem_used = int(mem[2])
-        disk_used = disk[2]
-        disk_total = disk[1]
+        async with aiosqlite.connect("servers.db") as db:  # Змінено шлях на корінь проекту
+            ignored_containers = await get_ignored_containers(db)
         
         containers = []
-        async with aiosqlite.connect("servers.db") as db:  # Змінено шлях на корінь проекту
-            async with db.execute("SELECT name FROM ignored_containers") as cursor:
-                ignored = {row[0] for row in await cursor.fetchall()}
-        
-        for line in containers_raw:
-            parts = line.split()
-            name = parts[0]
-            if name in ignored:
+        for container in containers_raw:
+            if not container:
                 continue
-            status = " ".join(parts[1:parts.index("2025") if "2025" in parts else len(parts)])
-            created_at = " ".join(parts[parts.index("2025") if "2025" in parts else -2:-1])
-            stdin, stdout, stderr = await asyncio.to_thread(ssh.exec_command, 
-                f"docker inspect {name} | jq -r '.[0].State.Status' && docker stats --no-stream {name} --format '{{.CPUPerc}} {{.MemPerc}}'")
-            state = stdout.readline().strip()
-            stats = stdout.readline().strip().split()
-            cpu_load = stats[0] if stats else "0.00%"
-            mem_load = stats[1] if len(stats) > 1 else "0.00%"
-            
-            containers.append({
-                "name": name,
-                "status": state,
-                "cpu_load": cpu_load,
-                "mem_load": mem_load,
-                "created": created_at,
-                "uptime": status if "Up" in status else "Down"
-            })
+            try:
+                c_id, c_name, c_state, c_created, c_status = container.split("|", 4)
+                if c_name in ignored_containers:
+                    continue
+
+                stats_output, stats_error = await asyncio.to_thread(ssh_exec, ssh, f"docker stats --no-stream {c_id}")
+                if stats_error:
+                    stats_cpu, stats_mem = "N/A", "N/A"
+                else:
+                    stats = stats_output.splitlines()[1].split()
+                    stats_cpu, stats_mem = stats[2], stats[6]
+
+                containers.append({
+                    "name": c_name,
+                    "status": c_state,
+                    "cpu_load": stats_cpu,
+                    "mem_load": stats_mem,
+                    "created": c_created,
+                    "uptime": c_status
+                })
+            except ValueError as e:
+                continue
         
         return {
-            "cpu": cpu_load,  # Останній контейнер, можна змінити логіку
-            "mem": f"{mem_used}/{mem_total} MB",
-            "disk": f"{disk_used}/{disk_total}",
+            "cpu": cpu,
+            "mem": mem_usage,
+            "disk": f"{disk[0]}/{disk[1]}",
             "uptime": uptime,
             "containers": containers
         }
     except Exception as e:
-        logging.error(f"Error connecting to {server['ip']}: {str(e)}")
-        return f"Помилка підключення: {str(e)}"
+        return f"Error: {str(e)}"
     finally:
         ssh.close()
-
-if __name__ == "__main__":
-    asyncio.run(init_db())
