@@ -99,7 +99,7 @@ def setup_commands(bot):
     async def add_server(ctx, ip, username, password, name=None, port: int = 22):
         if not await check_permissions(ctx):
             return
-        async with aiosqlite.connect("/app/data/servers.db") as db:
+        async with aiosqlite.connect("/servers.db") as db:
             await db.execute("INSERT INTO servers (ip, port, username, password, name) VALUES (?, ?, ?, ?, ?)",
                              (ip, port, username, password, name))
             await db.commit()
@@ -111,7 +111,7 @@ def setup_commands(bot):
         if not await check_permissions(ctx):
             return
         try:
-            async with aiosqlite.connect("/app/data/servers.db") as db:
+            async with aiosqlite.connect("/servers.db") as db:
                 await db.execute("INSERT INTO ignored_containers (name) VALUES (?)", (container_name,))
                 await db.commit()
             await ctx.reply(f"Контейнер `{container_name}` додано до списку ігнорованих.", delete_after=5)
@@ -123,7 +123,7 @@ def setup_commands(bot):
     async def unignore_container(ctx, container_name):
         if not await check_permissions(ctx):
             return
-        async with aiosqlite.connect("/app/data/servers.db") as db:
+        async with aiosqlite.connect("/servers.db") as db:
             await db.execute("DELETE FROM ignored_containers WHERE name = ?", (container_name,))
             await db.commit()
         await ctx.reply(f"Контейнер `{container_name}` видалено зі списку ігнорованих.", delete_after=5)
@@ -133,7 +133,7 @@ def setup_commands(bot):
     async def start_monitor(ctx):
         if not await check_permissions(ctx):
             return
-        async with aiosqlite.connect("/app/data/servers.db") as db:
+        async with aiosqlite.connect("/servers.db") as db:
             async with db.execute("SELECT * FROM servers") as cursor:
                 servers = await cursor.fetchall()
         
@@ -177,7 +177,7 @@ def setup_commands(bot):
             await ctx.message.delete()
             return
 
-        async with aiosqlite.connect("/app/data/servers.db") as db:
+        async with aiosqlite.connect("/servers.db") as db:
             async with db.execute("SELECT * FROM servers WHERE ip = ?", (ip,)) as cursor:
                 server = await cursor.fetchone()
         
@@ -210,7 +210,7 @@ def setup_commands(bot):
 
     @tasks.loop()
     async def update_status(channel, servers):
-        async with aiosqlite.connect("/app/data/servers.db") as db:
+        async with aiosqlite.connect("/servers.db") as db:
             async with db.execute("SELECT * FROM servers") as cursor:
                 current_servers = await cursor.fetchall()
         
